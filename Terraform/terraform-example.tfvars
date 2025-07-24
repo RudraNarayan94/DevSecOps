@@ -1,0 +1,12 @@
+project_name       = "myApp"
+bucket_name        = "your-unique-artifact-bucket-name"
+aws_region         = "your-aws-region"
+ami_id             = "ami-xxxxxxxxxxxxxxxxx"        # e.g., ami-0abcdef1234567890 (Ubuntu, Amazon Linux 2, etc.)
+instance_type      = "t3.micro"
+key_name           = "your-keypair-name"            # Must exist in your AWS account
+github_owner       = "your-github-username"
+github_repo        = "your-application-repo"        # The repository containing your app code
+github_branch      = "your-branch-name"
+github_token       = "your-github-personal-access-token" # Token with 'repo' access
+instance_tag_key   = "Name"
+instance_tag_value = "MyAppServer"
