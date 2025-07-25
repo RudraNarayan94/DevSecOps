@@ -1,24 +1,24 @@
 variable "aws_region" {
-  default = "eu-north-1"
+  default = "ap-south-1"
 }
 
 variable "project_name" {
-  default = "MyApp"
+  default = "Currency-Converter"
 }
 
 variable "github_token" {
-  description = "GitHub PAT"
   type        = string
+  description = "GitHub PAT with repo access"
 }
 
 variable "github_owner" {
-  description = "GitHub username"
   type        = string
+  description = "GitHub user/org"
 }
 
 variable "github_repo" {
-  description = "GitHub repo name"
   type        = string
+  description = "GitHub repo name"
 }
 
 variable "github_branch" {
@@ -26,21 +26,24 @@ variable "github_branch" {
 }
 
 variable "bucket_name" {
-  description = "Artifact bucket name"
-  type        = string
+  type = string
 }
 
 variable "ami_id" {
-  default     = "ami-00c8ac9147e19828e" # Amazon Linux 2023
+  default = "ami-0e670eb768a5fc3d4" # Amazon Linux 2023 in ap-south-1
 }
+
 
 variable "instance_type" {
   default = "t3.micro"
 }
 
 variable "key_name" {
-  description = "EC2 key pair name"
-  type        = string
+  type = string
+}
+
+variable "public_key_path" {
+  type = string
 }
 
 variable "instance_tag_key" {
