@@ -130,6 +130,89 @@ curl http://<ec2-public-ip>
 
 ---
 
+## 🧪 Infrastructure Testing with Terratest
+
+To validate the Terraform modules using Terratest:
+
+### 1. Install Prerequisites
+
+Ensure you have Go (for Terratest), Terraform, and Git installed.
+
+### 2. Project Structure
+
+Organize your project like this:
+
+```
+DevSecOps/
+├── Terraform/                     # Your Terraform code (main.tf, variables.tf, etc)
+└── test/                          # Terratest files
+    └── terraform_pipeline_test.go
+```
+
+### 3. Write the Test Code
+
+Create `test/terraform_pipeline_test.go`:
+
+```go
+package test
+
+import (
+  "testing"
+
+  "github.com/gruntwork-io/terratest/modules/terraform"
+  "github.com/stretchr/testify/assert"
+)
+
+func TestTerraformPipeline(t *testing.T) {
+  t.Parallel()
+
+  tf := &terraform.Options{
+    TerraformDir: "../Terraform", // Path to your Terraform directory
+  }
+
+  defer terraform.Destroy(t, tf)             // Cleanup resources after test
+  terraform.InitAndApply(t, tf)             // Run terraform init + apply
+
+  // Test pipeline creation
+  pipelineName := terraform.Output(t, tf, "pipeline_name")
+  assert.NotEmpty(t, pipelineName)
+
+  // Test EC2 instance creation
+  ec2PublicIP := terraform.Output(t, tf, "ec2_public_ip")
+  assert.NotEmpty(t, ec2PublicIP)
+}
+```
+
+### 4. Initialize Go Project
+
+From the project root directory:
+
+```bash
+go mod init currency-converter-test
+go get github.com/gruntwork-io/terratest/modules/terraform
+go get github.com/stretchr/testify/assert
+```
+
+### 5. Run the Test
+
+From the root directory:
+
+```bash
+go test ./test -v -timeout 30m
+```
+
+This will:
+
+- Initialize and apply your Terraform configuration
+- Capture and assert the outputs (`pipeline_name` and `ec2_public_ip`)
+- Automatically destroy resources after testing
+
+### 6. Test Configuration
+
+For comprehensive testing, you can also create a test-specific `terraform.tfvars` file in the `test/` directory with test values.
+
+---
+
 ## 📋 Pipeline Stages
 
 1. **Source**: Pulls code from GitHub repository
