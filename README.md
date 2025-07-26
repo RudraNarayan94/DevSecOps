@@ -263,15 +263,243 @@ ssh -i devsecops-keypair ec2-user@<ec2-public-ip>
 
 ---
 
+# Task 2: DevSecOps Integration with GitHub Actions & Sealed Secrets
+
+## 📘 Documentation
+
+### 1. Overview
+
+Enhance your existing infrastructure pipeline by adding:
+
+- Automated security scans (Terraform & Docker)
+- Docker image build & push to Docker Hub
+- Kubernetes deployment using Sealed Secrets for secure configuration
+
+### 2. Prerequisites
+
+- A Kubernetes cluster (Minikube, Kind, or EKS) and a valid `~/.kube/config`
+- `kubectl`, `kubeseal` CLI installed locally
+- Docker Hub account with a repository `currency-converter`
+- GitHub repo secrets:
+  - `DOCKERHUB_USERNAME` & `DOCKERHUB_TOKEN`
+  - `KUBECONFIG_BASE64` (your base64‑encoded kubeconfig)
+
+### 3. Project Structure
+
+```
+DevSecOps/
+├── App/
+│   └── Dockerfile
+├── k8s/
+│   ├── manifests/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   └── secrets/
+│       └── sealed-secret.yaml
+└── .github/
+    └── workflows/
+        └── devsecops-pipeline.yml
+```
+
+### 4. Build & Push Docker Image to Docker Hub
+
+**Dockerfile** (in `App/Dockerfile`):
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:stable-alpine
+RUN rm -rf /usr/share/nginx/html/*
+COPY --from=builder /usr/src/app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+GitHub Actions job will:
+
+- `docker/login-action@v2` to Docker Hub
+- Build and tag:
+
+```bash
+docker build -t currency-converter:latest App/
+docker tag currency-converter:latest \
+  ${{ secrets.DOCKERHUB_USERNAME }}/currency-converter:latest
+```
+
+- Push to Docker Hub
+
+### 5. Secure Secrets with Sealed Secrets
+
+**Create plain secret:**
+
+```bash
+kubectl create secret generic db-creds \
+  --from-literal=username=admin \
+  --from-literal=password=pass123 \
+  --dry-run=client -o yaml > secret.yaml
+```
+
+**Seal it:**
+
+```bash
+kubeseal --cert my-sealed-secrets-cert.pem \
+  --format yaml < secret.yaml > k8s/secrets/sealed-secret.yaml
+```
+
+**sealed-secret.yaml:**
+
+```yaml
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: db-creds
+  namespace: default
+spec:
+  encryptedData:
+    username: AgD1Ukw...
+    password: AgB0c34x...
+  template:
+    metadata:
+      name: db-creds
+      namespace: default
+```
+
+### 6. Kubernetes Manifests
+
+**k8s/manifests/deployment.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: currency-converter
+  labels: { app: currency-converter }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: currency-converter } }
+  template:
+    metadata: { labels: { app: currency-converter } }
+    spec:
+      containers:
+        - name: currency-converter
+          image: docker.io/${DOCKERHUB_USERNAME}/currency-converter:latest
+          ports: [{ containerPort: 80 }]
+          env:
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-creds
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-creds
+                  key: password
+```
+
+**k8s/manifests/service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: currency-converter-svc
+spec:
+  selector: { app: currency-converter }
+  ports: [{ port: 80, targetPort: 80 }]
+  type: ClusterIP
+```
+
+### 7. GitHub Actions Workflow
+
+**.github/workflows/devsecops-pipeline.yml:**
+
+```yaml
+name: DevSecOps CI/CD
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE_NAME: currency-converter
+
+jobs:
+  validate-terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v2
+        with: { terraform_version: 1.5.5 }
+      - run: terraform init
+      - run: terraform fmt -check
+      - run: terraform validate
+      - uses: aquasecurity/tfsec-action@v1.0.0
+
+  docker-security:
+    runs-on: ubuntu-latest
+    needs: validate-terraform
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/login-action@v2
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v2
+      - run: |
+          docker build -t $IMAGE_NAME:latest App/
+          docker tag $IMAGE_NAME:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:latest
+      - run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:latest
+      - run: |
+          sudo apt-get update && sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb stable main | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -y trivy
+      - run: trivy image --exit-code 1 --severity HIGH,CRITICAL \
+          ${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:latest
+
+  deploy-kubernetes:
+    runs-on: ubuntu-latest
+    needs: docker-security
+    steps:
+      - uses: actions/checkout@v3
+      - uses: azure/setup-kubectl@v3
+        with: { version: v1.29.0 }
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 --decode > $HOME/.kube/config
+      - run: kubectl apply -f k8s/secrets/sealed-secret.yaml
+      - run: kubectl apply -f k8s/manifests/
+```
+
+### 8. Generate & Store KUBECONFIG_BASE64
+
+```bash
+# After your cluster's kubeconfig exists
+cat ~/.kube/config | base64 -w0
+```
+
+Copy the output as `KUBECONFIG_BASE64` in GitHub Secrets.
+
 ## 👨‍💻 Author
 
 **Rudra Narayan**
 
-- 🔗 [LinkedIn](https://linkedin.com/in/your-profile)
-- 📧 [Email](mailto:your-email@example.com)
+- 🔗 [LinkedIn](https://linkedin.com/in/Rudra404/)
+- 📧 [Email](mailto:rudranarayans10@gmail.com)
 
 ---
 
 ## 📜 License
 
 MIT License - see LICENSE file for details
+
+---
